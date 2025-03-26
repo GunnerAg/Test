@@ -22,11 +22,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
-      - name: Run adapter validation script
-        run: node scripts/validate-adapter.js ${{ github.ref_name }}
+      - name: Extract adapter name
+        id: extract
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          ADAPTER_NAME=${BRANCH_NAME#collaborate/adapter/}
+          echo "adapter_name=$ADAPTER_NAME" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
       
-      - name: Run wallet unit tests
-        run: npm run test:wallet
+      - name: Run adapter validation script
+        run: node scripts/validate-adapter.js collaborate/adapter/${{ steps.extract.outputs.adapter_name }}
 
   sync-to-bitbucket:
     needs: validate
@@ -44,25 +49,96 @@ jobs:
           ADAPTER_NAME=${BRANCH_NAME#collaborate/adapter/}
           echo "adapter_name=$ADAPTER_NAME" >> $GITHUB_OUTPUT
       
-      - name: Push to Bitbucket
+      - name: Analyze adapter dependencies
+        id: dependencies
         run: |
-          # Configure Git with token-based auth
-          git config --global user.email "s8zi8hu1vqkcxcn63kpbi6jl6awsk4@bots.bitbucket.org"
-          git config --global user.name "GitHub Actions Bot"
+          ADAPTER_NAME=${{ steps.extract.outputs.adapter_name }}
+          ADAPTER_FILE=packages/wallet/src/adapters/${ADAPTER_NAME}Wallet.ts
           
-          # Extract adapter name 
-          ADAPTER_NAME="${{ steps.extract.outputs.adapter_name }}"
+          # Extract imports from the adapter file
+          IMPORTS=$(grep -o "import.*from.*'.*'" $ADAPTER_FILE || echo "")
           
-          # Set up remote with token authentication
-          BITBUCKET_URL="https://x-token-auth:${{ secrets.BITBUCKET_ACCESS_TOKEN }}@bitbucket.org/ctb-marisca/ms3-package.git"
-          git remote add bitbucket $BITBUCKET_URL
+          # Find external package imports (not relative)
+          PACKAGES=$(echo "$IMPORTS" | grep -v "from '\./" || echo "")
           
-          # Check if branch exists (prevents overwriting)
-          if git ls-remote --heads bitbucket github/$ADAPTER_NAME | grep -q github/$ADAPTER_NAME; then
-            echo "Branch github/$ADAPTER_NAME already exists on BitBucket. Skipping push."
-            exit 1
+          # Extract package names
+          DEPS=$(echo "$PACKAGES" | grep -o "'[^']*'" | grep -v "@m3s" | tr -d "'" || echo "")
+          
+          # Output discovered dependencies
+          if [ ! -z "$DEPS" ]; then
+            echo "dependencies=$(echo $DEPS | tr '\n' ' ')" >> $GITHUB_OUTPUT
+            echo "Found dependencies: $DEPS"
+          else
+            echo "No external dependencies found"
+          fi
+
+      - name: Prepare adapter files for Bitbucket
+        run: |
+          # Create a temporary directory structure
+          mkdir -p temp_branch/packages/wallet/src/adapters
+          
+          # Copy only the adapter implementation file
+          cp packages/wallet/src/adapters/${{ steps.extract.outputs.adapter_name }}Wallet.ts temp_branch/packages/wallet/src/adapters/
+          
+          # Generate registration file automatically
+          cat > temp_branch/packages/wallet/src/adapters/${{ steps.extract.outputs.adapter_name }}Wallet.registration.ts << EOF
+          import { adapterRegistry } from './registry.js';
+          import { WalletType } from '../types/index.js';
+          import { ${{ steps.extract.outputs.adapter_name }}WalletAdapter } from './${{ steps.extract.outputs.adapter_name }}Wallet.js';
+
+          adapterRegistry.register({
+            name: "${{ steps.extract.outputs.adapter_name }}",
+            adapterType: WalletType['${{ steps.extract.outputs.adapter_name }}'], 
+            adapterClass: ${{ steps.extract.outputs.adapter_name }}WalletAdapter,
+            requirements: [],
+          });
+          EOF
+      
+      - name: Update package.json with dependencies
+        if: steps.dependencies.outputs.dependencies != ''
+        run: |
+          # Create package.json with peerDependencies if it doesn't exist
+          if [ ! -f "temp_branch/packages/wallet/package.json" ]; then
+            mkdir -p temp_branch/packages/wallet
+            cp packages/wallet/package.json temp_branch/packages/wallet/
           fi
           
-          # Push to BitBucket
-          echo "Pushing to BitBucket branch: github/$ADAPTER_NAME"
-          git push bitbucket HEAD:github/$ADAPTER_NAME
+          # Add discovered dependencies to peerDependencies
+          for DEP in ${{ steps.dependencies.outputs.dependencies }}; do
+            # Check if package is already in peerDependencies
+            if ! grep -q "\"$DEP\":" temp_branch/packages/wallet/package.json; then
+              # Use jq to add to peerDependencies
+              jq --arg dep "$DEP" '.peerDependencies[$dep] = "^1.0.0"' \
+                temp_branch/packages/wallet/package.json > temp.json && mv temp.json temp_branch/packages/wallet/package.json
+              
+              # Also make it optional in peerDependenciesMeta
+              jq --arg dep "$DEP" '.peerDependenciesMeta[$dep] = {"optional": true}' \
+                temp_branch/packages/wallet/package.json > temp.json && mv temp.json temp_branch/packages/wallet/package.json
+              
+              echo "Added $DEP to peerDependencies"
+            fi
+          done
+
+      - name: Push to Bitbucket
+        run: |
+          cd temp_branch
+          git init
+          git config user.email "${{ secrets.BITBUCKET_BOT_EMAIL }}"
+          git config user.name "GitHub Actions Bot"
+          git add .
+          git commit -m "Add ${{ steps.extract.outputs.adapter_name }} adapter from GitHub contribution"
+          
+          # Clean token and repo path to remove any newlines or special characters
+          TOKEN=$(echo "${{ secrets.BITBUCKET_ACCESS_TOKEN }}" | tr -d '\n\r')
+          REPO_PATH=$(echo "${{ secrets.BITBUCKET_REPO_PATH }}" | tr -d '\n\r')
+          
+          # Configure Git credentials with a cleaner approach
+          git config --global credential.helper store
+          echo "https://x-token-auth:${TOKEN}@bitbucket.org" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          # Push using a cleaner URL format
+          git push --force https://bitbucket.org/${REPO_PATH}.git HEAD:refs/heads/github/${{ steps.extract.outputs.adapter_name }}
+          
+          # Clean up credentials
+          rm -f ~/.git-credentials

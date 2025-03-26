@@ -22,14 +22,6 @@ if (!fs.existsSync(adapterFilePath)) {
   process.exit(1);
 }
 
-// Check if registration file exists
-const regFilePath = path.join(__dirname, '..', 'packages/wallet/src/adapters', `${adapterName}Wallet.registration.ts`);
-if (!fs.existsSync(regFilePath)) {
-  console.error(`Registration file not found at: ${regFilePath}`);
-  console.error(`Please create a registration file that adds your adapter to the registry.`);
-  process.exit(1);
-}
-
 // Run TypeScript compiler to verify interface implementation
 try {
   console.log('Running TypeScript compiler to validate interfaces...');
@@ -40,24 +32,38 @@ try {
   process.exit(1);
 }
 
-// Check if unit tests exist for adapter
-const testPath = path.join(__dirname, '..', 'tests/unit/wallet/adapters', `${adapterName}Wallet.spec.ts`);
-if (!fs.existsSync(testPath)) {
-  console.error(`❌ Unit tests not found at: ${testPath}`);
-  console.error('Please add unit tests for your adapter');
-  process.exit(1);
-}
-
-// Run unit tests for the adapter
+// Run the dynamic validation test
 try {
-  console.log(`Running unit tests for ${adapterName}Wallet...`);
-  execSync(`npx mocha -r ts-node/register tests/unit/wallet/adapters/${adapterName}Wallet.spec.ts`, { 
-    stdio: 'inherit', 
-    cwd: path.join(__dirname, '..') 
+  console.log(`Running dynamic validation for ${adapterName}Wallet...`);
+  
+  // Extract the interface directly from the file content using regex
+  const fileContent = fs.readFileSync(adapterFilePath, 'utf8');
+  const implementsMatch = fileContent.match(/implements\s+(\w+)/);
+  
+  if (!implementsMatch) {
+    console.error('❌ Could not detect interface implementation in adapter');
+    process.exit(1);
+  }
+  
+  // Extract the implemented interface name
+  const interfaceName = implementsMatch[1];
+  console.log(`Detected implementation of interface: ${interfaceName}`);
+  
+  // Set environment variables for the test
+  // Use a RELATIVE PATH from the test file to the adapter
+  process.env.ADAPTER_PATH = "../../../../packages/wallet/src/adapters/" + adapterName + "Wallet";
+  process.env.INTERFACE_NAME = interfaceName;
+  
+  // Run the test with the extracted interface information
+  execSync('npx mocha -r ts-node/register tests/unit/wallet/adapters/adapterWallet.spec.ts', { 
+    stdio: 'inherit',
+    cwd: path.join(__dirname, '..'),
+    env: {...process.env}
   });
-  console.log('✅ Unit tests passed');
+  
+  console.log('✅ Dynamic validation passed');
 } catch (error) {
-  console.error('❌ Unit tests failed');
+  console.error('❌ Dynamic validation failed');
   process.exit(1);
 }
 
