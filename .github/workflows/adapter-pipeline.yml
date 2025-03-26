@@ -2,12 +2,11 @@ name: Wallet Adapter Pipeline
 
 on:
   pull_request:
-    branches:
+       branches:
       - 'collaborate/adapter/**'
   push:
     branches:
       - 'collaborate/adapter/**'
-
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -28,9 +27,10 @@ jobs:
           BRANCH_NAME=${GITHUB_REF#refs/heads/}
           ADAPTER_NAME=${BRANCH_NAME#collaborate/adapter/}
           echo "adapter_name=$ADAPTER_NAME" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
       
       - name: Run adapter validation script
-        run: node scripts/validate-adapter.js ${{ steps.extract.outputs.adapter_name }}
+        run: node scripts/validate-adapter.js collaborate/adapter/${{ steps.extract.outputs.adapter_name }}
 
   sync-to-bitbucket:
     needs: validate
