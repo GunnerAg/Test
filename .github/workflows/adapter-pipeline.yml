@@ -119,20 +119,6 @@ jobs:
             fi
           done
 
-      - name: Update version matrix for adapter
-        run: |
-          # Run the matrix update script and capture the features
-          ADAPTER_NAME=${{ steps.extract.outputs.adapter_name }}
-          node scripts/update-version-matrix.js $ADAPTER_NAME
-          
-          # Copy the updated version matrix to the temp branch
-          mkdir -p temp_branch/packages/utils/src/versions
-          cp packages/utils/src/versions/versionMatrix.json temp_branch/packages/utils/src/versions/
-          cp version-matrix.json temp_branch/
-          
-          # Add a note about version matrix update in the commit message
-          echo "Version matrix updated with $ADAPTER_NAME capabilities" >> temp_branch/update_notes.txt
-
       - name: Push to Bitbucket
         run: |
           cd temp_branch
