@@ -71,7 +71,7 @@ export class Web3AuthWalletAdapter implements IEVMWallet {
 
   /**
    * Initialize the Web3AuthNoModal instance with the provided configuration.
-   * @throws Error if initialization fails or chainConfig is missing
+   * @throws Error if initialization fails or chainConfig is missing.
    */
   async initialize(config?: any): Promise<void> {
     if (this.initialized) return;
