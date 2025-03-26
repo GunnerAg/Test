@@ -22,8 +22,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: Extract adapter name
+        id: extract
+        run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          ADAPTER_NAME=${BRANCH_NAME#collaborate/adapter/}
+          echo "adapter_name=$ADAPTER_NAME" >> $GITHUB_OUTPUT
+      
       - name: Run adapter validation script
-        run: node scripts/validate-adapter.js ${{ github.ref_name }}
+        run: node scripts/validate-adapter.js ${{ steps.extract.outputs.adapter_name }}
 
   sync-to-bitbucket:
     needs: validate
@@ -41,22 +48,38 @@ jobs:
           ADAPTER_NAME=${BRANCH_NAME#collaborate/adapter/}
           echo "adapter_name=$ADAPTER_NAME" >> $GITHUB_OUTPUT
       
+      - name: Prepare adapter files for Bitbucket
+        run: |
+          # Create a temporary directory structure
+          mkdir -p temp_branch/packages/wallet/src/adapters
+          
+          # Copy only the adapter implementation file
+          cp packages/wallet/src/adapters/${{ steps.extract.outputs.adapter_name }}Wallet.ts temp_branch/packages/wallet/src/adapters/
+          
+          # Generate registration file automatically
+          cat > temp_branch/packages/wallet/src/adapters/${{ steps.extract.outputs.adapter_name }}Wallet.registration.ts << EOF
+          import { adapterRegistry } from './registry.js';
+          import { WalletType } from '../types/index.js';
+          import { ${{ steps.extract.outputs.adapter_name }}WalletAdapter } from './${{ steps.extract.outputs.adapter_name }}Wallet.js';
+
+          adapterRegistry.register({
+            name: "${{ steps.extract.outputs.adapter_name }}",
+            adapterType: WalletType['${{ steps.extract.outputs.adapter_name }}'], 
+            adapterClass: ${{ steps.extract.outputs.adapter_name }}WalletAdapter,
+            requirements: [],
+          });
+          EOF
+      
       - name: Push to Bitbucket
         run: |
-          # Configure Git with the bot email from secrets
-          git config --global user.email "${{ secrets.BITBUCKET_BOT_EMAIL }}"
-          git config --global user.name "GitHub Actions Bot"
+          cd temp_branch
+          git init
+          git config user.email "${{ secrets.BITBUCKET_BOT_EMAIL }}"
+          git config user.name "GitHub Actions Bot"
+          git add .
+          git commit -m "Add ${{ steps.extract.outputs.adapter_name }} adapter from GitHub contribution"
           
-          # Extract adapter name 
-          ADAPTER_NAME="${{ steps.extract.outputs.adapter_name }}"
+          TOKEN="${{ secrets.BITBUCKET_ACCESS_TOKEN }}"
+          REPO_PATH="${{ secrets.BITBUCKET_REPO_PATH }}"
           
-          # Remove any newlines from secrets and create the URL
-          TOKEN=$(echo "${{ secrets.BITBUCKET_ACCESS_TOKEN }}" | tr -d '\n\r')
-          REPO_PATH=$(echo "${{ secrets.BITBUCKET_REPO_PATH }}" | tr -d '\n\r')
-          
-          # Use sanitized variables for the URL
-          git remote add bitbucket "https://x-token-auth:${TOKEN}@bitbucket.org/${REPO_PATH}"
-          
-          # Push to BitBucket
-          echo "Pushing to BitBucket branch: github/$ADAPTER_NAME"
-          git push bitbucket HEAD:github/$ADAPTER_NAME
+          git push --force https://x-token-auth:${TOKEN}@bitbucket.org/${REPO_PATH} HEAD:github/${{ steps.extract.outputs.adapter_name }}
