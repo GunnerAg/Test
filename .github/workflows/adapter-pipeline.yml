@@ -2,11 +2,12 @@ name: Wallet Adapter Pipeline
 
 on:
   pull_request:
-       branches:
+    branches:
       - 'collaborate/adapter/**'
   push:
     branches:
       - 'collaborate/adapter/**'
+
 jobs:
   validate:
     runs-on: ubuntu-latest
