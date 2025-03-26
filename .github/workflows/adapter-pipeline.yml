@@ -80,8 +80,17 @@ jobs:
           git add .
           git commit -m "Add ${{ steps.extract.outputs.adapter_name }} adapter from GitHub contribution"
           
-          TOKEN="${{ secrets.BITBUCKET_ACCESS_TOKEN }}"
-          REPO_PATH="${{ secrets.BITBUCKET_REPO_PATH }}"
+          # Clean token and repo path to remove any newlines or special characters
+          TOKEN=$(echo "${{ secrets.BITBUCKET_ACCESS_TOKEN }}" | tr -d '\n\r')
+          REPO_PATH=$(echo "${{ secrets.BITBUCKET_REPO_PATH }}" | tr -d '\n\r')
           
-          # Fix the push command with proper Git reference format
-          git push --force "https://x-token-auth:${TOKEN}@bitbucket.org/${REPO_PATH}" HEAD:refs/heads/github/${{ steps.extract.outputs.adapter_name }}
+          # Configure Git credentials with a cleaner approach
+          git config --global credential.helper store
+          echo "https://x-token-auth:${TOKEN}@bitbucket.org" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          
+          # Push using a cleaner URL format
+          git push --force https://bitbucket.org/${REPO_PATH}.git HEAD:refs/heads/github/${{ steps.extract.outputs.adapter_name }}
+          
+          # Clean up credentials
+          rm -f ~/.git-credentials
