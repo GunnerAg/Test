@@ -49,6 +49,29 @@ jobs:
           ADAPTER_NAME=${BRANCH_NAME#collaborate/adapter/}
           echo "adapter_name=$ADAPTER_NAME" >> $GITHUB_OUTPUT
       
+      - name: Analyze adapter dependencies
+        id: dependencies
+        run: |
+          ADAPTER_NAME=${{ steps.extract.outputs.adapter_name }}
+          ADAPTER_FILE=packages/wallet/src/adapters/${ADAPTER_NAME}Wallet.ts
+          
+          # Extract imports from the adapter file
+          IMPORTS=$(grep -o "import.*from.*'.*'" $ADAPTER_FILE || echo "")
+          
+          # Find external package imports (not relative)
+          PACKAGES=$(echo "$IMPORTS" | grep -v "from '\./" || echo "")
+          
+          # Extract package names
+          DEPS=$(echo "$PACKAGES" | grep -o "'[^']*'" | grep -v "@m3s" | tr -d "'" || echo "")
+          
+          # Output discovered dependencies
+          if [ ! -z "$DEPS" ]; then
+            echo "dependencies=$(echo $DEPS | tr '\n' ' ')" >> $GITHUB_OUTPUT
+            echo "Found dependencies: $DEPS"
+          else
+            echo "No external dependencies found"
+          fi
+
       - name: Prepare adapter files for Bitbucket
         run: |
           # Create a temporary directory structure
@@ -71,6 +94,45 @@ jobs:
           });
           EOF
       
+      - name: Update package.json with dependencies
+        if: steps.dependencies.outputs.dependencies != ''
+        run: |
+          # Create package.json with peerDependencies if it doesn't exist
+          if [ ! -f "temp_branch/packages/wallet/package.json" ]; then
+            mkdir -p temp_branch/packages/wallet
+            cp packages/wallet/package.json temp_branch/packages/wallet/
+          fi
+          
+          # Add discovered dependencies to peerDependencies
+          for DEP in ${{ steps.dependencies.outputs.dependencies }}; do
+            # Check if package is already in peerDependencies
+            if ! grep -q "\"$DEP\":" temp_branch/packages/wallet/package.json; then
+              # Use jq to add to peerDependencies
+              jq --arg dep "$DEP" '.peerDependencies[$dep] = "^1.0.0"' \
+                temp_branch/packages/wallet/package.json > temp.json && mv temp.json temp_branch/packages/wallet/package.json
+              
+              # Also make it optional in peerDependenciesMeta
+              jq --arg dep "$DEP" '.peerDependenciesMeta[$dep] = {"optional": true}' \
+                temp_branch/packages/wallet/package.json > temp.json && mv temp.json temp_branch/packages/wallet/package.json
+              
+              echo "Added $DEP to peerDependencies"
+            fi
+          done
+
+      - name: Update version matrix for adapter
+        run: |
+          # Run the matrix update script and capture the features
+          ADAPTER_NAME=${{ steps.extract.outputs.adapter_name }}
+          node scripts/update-version-matrix.js $ADAPTER_NAME
+          
+          # Copy the updated version matrix to the temp branch
+          mkdir -p temp_branch/packages/utils/src/versions
+          cp packages/utils/src/versions/versionMatrix.json temp_branch/packages/utils/src/versions/
+          cp version-matrix.json temp_branch/
+          
+          # Add a note about version matrix update in the commit message
+          echo "Version matrix updated with $ADAPTER_NAME capabilities" >> temp_branch/update_notes.txt
+
       - name: Push to Bitbucket
         run: |
           cd temp_branch
