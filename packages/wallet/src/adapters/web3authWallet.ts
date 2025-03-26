@@ -5,6 +5,9 @@ import { ethers, TransactionReceipt } from "ethers";
 import { AuthAdapter } from "@web3auth/auth-adapter";
 import { IEVMWallet, TransactionData, TypedData, WalletEvent } from "@m3s/wallet";
 
+/**
+ * Web3AuthWalletAdapter configuration arguments
+ */
 interface args {
   adapterName: string;
   options: {
