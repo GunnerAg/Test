@@ -83,4 +83,5 @@ jobs:
           TOKEN="${{ secrets.BITBUCKET_ACCESS_TOKEN }}"
           REPO_PATH="${{ secrets.BITBUCKET_REPO_PATH }}"
           
-          git push --force https://x-token-auth:${TOKEN}@bitbucket.org/${REPO_PATH} HEAD:github/${{ steps.extract.outputs.adapter_name }}
+          # Fix the push command with proper Git reference format
+          git push --force "https://x-token-auth:${TOKEN}@bitbucket.org/${REPO_PATH}" HEAD:refs/heads/github/${{ steps.extract.outputs.adapter_name }}
